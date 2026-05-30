@@ -26,6 +26,14 @@ type Conn interface {
 	SetWriteDeadline(t time.Time) error
 }
 
+type UnderlyingConnProvider interface {
+	UnderlyingConn() net.Conn
+}
+
+type TransportLifecycle interface {
+	TransportDone() <-chan struct{}
+}
+
 type PacketConn interface {
 	Read(b []byte) (n int, err error)
 	Write(b []byte) (n int, err error)
@@ -48,6 +56,38 @@ func (conn *FakeNetConn) LocalAddr() net.Addr {
 }
 func (conn *FakeNetConn) RemoteAddr() net.Addr {
 	return conn.RAddr
+}
+
+func (conn *FakeNetConn) UnderlyingConn() net.Conn {
+	if c, ok := conn.Conn.(net.Conn); ok {
+		return c
+	}
+	if c, ok := conn.Conn.(UnderlyingConnProvider); ok {
+		return c.UnderlyingConn()
+	}
+	return nil
+}
+
+func UnwrapTCPConn(conn any) (*net.TCPConn, bool) {
+	for i := 0; i < 8; i++ {
+		if conn == nil {
+			return nil, false
+		}
+		switch c := conn.(type) {
+		case *net.TCPConn:
+			return c, true
+		case interface{ UnwrapTCPConn() (*net.TCPConn, bool) }:
+			if tcpConn, ok := c.UnwrapTCPConn(); ok {
+				return tcpConn, true
+			}
+			return nil, false
+		case UnderlyingConnProvider:
+			conn = c.UnderlyingConn()
+		default:
+			return nil, false
+		}
+	}
+	return nil, false
 }
 
 type fakeNetPacketConn struct {

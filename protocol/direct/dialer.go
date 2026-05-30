@@ -21,6 +21,16 @@ func InitDirectDialers(fallbackDNS string) {
 	FullconeDirect = NewDirectDialerLaddr(netip.Addr{}, Option{FullCone: true, FallbackDNS: fallbackDNS})
 }
 
+func EnsureDirectDialers() {
+	if SymmetricDirect == nil || FullconeDirect == nil {
+		InitDirectDialers("")
+	}
+}
+
+func init() {
+	EnsureDirectDialers()
+}
+
 type Option struct {
 	FullCone    bool
 	FallbackDNS string
@@ -190,6 +200,7 @@ func (d *directDialer) dialTcp(ctx context.Context, addr string, mark int, mptcp
 }
 
 func (d *directDialer) DialContext(ctx context.Context, network, addr string) (c netproxy.Conn, err error) {
+	EnsureDirectDialers()
 	magicNetwork, err := netproxy.ParseMagicNetwork(network)
 	if err != nil {
 		return nil, err

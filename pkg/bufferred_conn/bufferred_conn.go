@@ -3,12 +3,25 @@ package bufferred_conn
 import (
 	"net"
 
+	"github.com/daeuniverse/outbound/netproxy"
 	"github.com/daeuniverse/outbound/pkg/zeroalloc/bufio"
 )
 
 type BufferedConn struct {
 	r        *bufio.Reader
 	net.Conn // So that most methods are embedded
+}
+
+var _ interface {
+	netproxy.UnderlyingConnProvider
+	relayPrefixSource
+	ReadByte() (byte, error)
+	UnreadByte() error
+} = (*BufferedConn)(nil)
+
+type relayPrefixSource interface {
+	TakeRelayPrefix() []byte
+	TakeRelaySegments() [][]byte
 }
 
 func NewBufferedConn(c net.Conn) *BufferedConn {
@@ -30,6 +43,35 @@ func (b BufferedConn) Close() error {
 
 func (b BufferedConn) Read(p []byte) (int, error) {
 	return b.r.Read(p)
+}
+
+func (b *BufferedConn) UnderlyingConn() net.Conn {
+	if b == nil {
+		return nil
+	}
+	return b.Conn
+}
+
+func (b *BufferedConn) TakeRelayPrefix() []byte {
+	if b == nil || b.r == nil {
+		return nil
+	}
+	if n := b.r.Buffered(); n > 0 {
+		prefix, _ := b.r.Peek(n)
+		if len(prefix) > 0 {
+			_, _ = b.r.Discard(len(prefix))
+			return prefix
+		}
+	}
+	return nil
+}
+
+func (b *BufferedConn) TakeRelaySegments() [][]byte {
+	prefix := b.TakeRelayPrefix()
+	if len(prefix) == 0 {
+		return nil
+	}
+	return [][]byte{prefix}
 }
 
 func (c *BufferedConn) ReadByte() (byte, error) {
