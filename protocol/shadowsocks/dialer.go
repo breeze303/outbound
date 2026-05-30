@@ -2,7 +2,9 @@ package shadowsocks
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"github.com/daeuniverse/outbound/ciphers"
 	"github.com/daeuniverse/outbound/common"
@@ -22,6 +24,29 @@ type Dialer struct {
 }
 
 func NewDialer(nextDialer netproxy.Dialer, header protocol.Header) (netproxy.Dialer, error) {
+	if strings.HasPrefix(header.Cipher, "2022-blake3-") {
+		if len(header.Password) == 0 {
+			return nil, fmt.Errorf("PSK cannot be empty")
+		}
+		for _, pskStr := range strings.Split(header.Password, ":") {
+			psk, err := base64.StdEncoding.DecodeString(pskStr)
+			if err != nil {
+				return nil, fmt.Errorf("PSK must be valid base64")
+			}
+			switch header.Cipher {
+			case "2022-blake3-aes-128-gcm":
+				if len(psk) != 16 {
+					return nil, fmt.Errorf("PSK length must be 16 bytes")
+				}
+			case "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305":
+				if len(psk) != 32 {
+					return nil, fmt.Errorf("PSK length must be 32 bytes")
+				}
+			default:
+				return nil, fmt.Errorf("unsupported shadowsocks encryption method: %v", header.Cipher)
+			}
+		}
+	}
 	//log.Trace("shadowsocks.NewDialer: metadata: %v, password: %v", metadata, password)
 	return &Dialer{
 		proxyAddress: header.ProxyAddress,

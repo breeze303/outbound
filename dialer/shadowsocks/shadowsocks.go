@@ -113,12 +113,40 @@ func (s *Shadowsocks) Dialer(option *dialer.ExtraOption, nextDialer netproxy.Dia
 		default:
 			return nil, nil, fmt.Errorf("unsupported mode %v of plugin %v", s.Plugin.Opts.Obfs, s.Plugin.Name)
 		}
+	case "shadowtls", "shadow-tls", "sstls":
+		return nil, nil, fmt.Errorf("%w: shadowtls plugin is unsupported in this outbound compatibility build", dialer.UnexpectedFieldErr)
 	default:
+	}
+	if strings.HasPrefix(s.Cipher, "2022-blake3-") {
+		if len(s.Password) == 0 {
+			return nil, nil, fmt.Errorf("PSK cannot be empty")
+		}
+		psks := strings.Split(s.Password, ":")
+		for _, pskStr := range psks {
+			psk, err := base64.StdEncoding.DecodeString(pskStr)
+			if err != nil {
+				return nil, nil, fmt.Errorf("PSK must be valid base64")
+			}
+			switch s.Cipher {
+			case "2022-blake3-aes-128-gcm":
+				if len(psk) != 16 {
+					return nil, nil, fmt.Errorf("PSK length must be 16 bytes")
+				}
+			case "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305":
+				if len(psk) != 32 {
+					return nil, nil, fmt.Errorf("PSK length must be 32 bytes")
+				}
+			default:
+				return nil, nil, fmt.Errorf("unsupported shadowsocks encryption method: %v", s.Cipher)
+			}
+		}
 	}
 	var nextDialerName string
 	switch s.Cipher {
 	case "aes-256-gcm", "aes-128-gcm", "chacha20-poly1305", "chacha20-ietf-poly1305":
 		nextDialerName = "shadowsocks"
+	case "2022-blake3-aes-256-gcm", "2022-blake3-aes-128-gcm", "2022-blake3-chacha20-poly1305":
+		nextDialerName = "shadowsocks_2022"
 	case "aes-128-cfb", "aes-192-cfb", "aes-256-cfb", "aes-128-ctr", "aes-192-ctr", "aes-256-ctr", "aes-128-ofb", "aes-192-ofb", "aes-256-ofb", "des-cfb", "bf-cfb", "cast5-cfb", "rc4-md5", "rc4-md5-6", "chacha20", "chacha20-ietf", "salsa20", "camellia-128-cfb", "camellia-192-cfb", "camellia-256-cfb", "idea-cfb", "rc2-cfb", "seed-cfb", "rc4", "none", "plain":
 		nextDialerName = "shadowsocks_stream"
 	default:
