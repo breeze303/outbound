@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,12 @@ type clientConnMeta struct {
 	cc *grpc.ClientConn
 }
 
+const transportCacheKeySeparator = "\x00"
+
+type transportCacheNamespaceProvider interface {
+	TransportCacheNamespace() string
+}
+
 var (
 	globalCCMap    map[string]*clientConnMeta
 	globalCCAccess sync.Mutex
@@ -37,6 +44,33 @@ func CleanGlobalClientConnectionCache() {
 	globalCCAccess.Lock()
 	defer globalCCAccess.Unlock()
 	globalCCMap = make(map[string]*clientConnMeta)
+}
+
+func CleanScopedClientConnectionCache(namespace string) {
+	if namespace == "" {
+		return
+	}
+	globalCCAccess.Lock()
+	defer globalCCAccess.Unlock()
+	for key := range globalCCMap {
+		if strings.HasPrefix(key, namespace+transportCacheKeySeparator) {
+			delete(globalCCMap, key)
+		}
+	}
+}
+
+func transportCacheNamespace(d netproxy.Dialer) string {
+	if provider, ok := d.(transportCacheNamespaceProvider); ok {
+		return provider.TransportCacheNamespace()
+	}
+	return ""
+}
+
+func transportCacheKey(namespace, address string) string {
+	if namespace == "" {
+		return address
+	}
+	return namespace + transportCacheKeySeparator + address
 }
 
 type ccCanceller func()
@@ -341,6 +375,7 @@ func (d *Dialer) DialContext(ctx context.Context, network string, address string
 }
 
 func getGrpcClientConn(ctx context.Context, tcpDialer netproxy.Dialer, serverName string, address string, allowInsecure bool, somark uint32, mptcp bool) (*clientConnMeta, ccCanceller, error) {
+	cacheKey := transportCacheKey(transportCacheNamespace(tcpDialer), address)
 	// allowInsecure?
 	roots, err := cert.GetSystemCertPool()
 	if err != nil {
@@ -357,13 +392,15 @@ func getGrpcClientConn(ctx context.Context, tcpDialer netproxy.Dialer, serverNam
 	canceller := func() {
 		globalCCAccess.Lock()
 		defer globalCCAccess.Unlock()
-		globalCCMap[address].cc.Close()
-		delete(globalCCMap, address)
+		if meta, found := globalCCMap[cacheKey]; found {
+			_ = meta.cc.Close()
+			delete(globalCCMap, cacheKey)
+		}
 	}
 
 	// TODO Should support chain proxy to the same destination
 	globalCCAccess.Lock()
-	if meta, found := globalCCMap[address]; found && meta.cc.GetState() != connectivity.Shutdown {
+	if meta, found := globalCCMap[cacheKey]; found && meta.cc.GetState() != connectivity.Shutdown {
 		globalCCAccess.Unlock()
 		return meta, canceller, nil
 	}
@@ -406,7 +443,7 @@ func getGrpcClientConn(ctx context.Context, tcpDialer netproxy.Dialer, serverNam
 		return nil, canceller, err
 	}
 	globalCCAccess.Lock()
-	globalCCMap[address] = meta
+	globalCCMap[cacheKey] = meta
 	globalCCAccess.Unlock()
 	return meta, canceller, err
 }

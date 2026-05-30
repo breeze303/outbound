@@ -79,6 +79,7 @@ func (m *Dialer) DialContext(ctx context.Context, network, addr string) (c netpr
 		tripper := &httpTripperClient{
 			nextDialer: m.nextDialer,
 			addr:       addr,
+			namespace:  transportCacheNamespace(m.nextDialer),
 			url:        m.url,
 		}
 
