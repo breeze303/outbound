@@ -28,26 +28,27 @@ func init() {
 }
 
 type V2Ray struct {
-	Ps            string `json:"ps"`
-	Add           string `json:"add"`
-	Port          string `json:"port"`
-	ID            string `json:"id"`
-	Aid           string `json:"aid"`
-	Net           string `json:"net"`
-	Type          string `json:"type"`
-	Host          string `json:"host"`
-	SNI           string `json:"sni"`
-	Path          string `json:"path"`
-	TLS           string `json:"tls"`
-	Flow          string `json:"flow,omitempty"`
-	Alpn          string `json:"alpn,omitempty"`
-	AllowInsecure bool   `json:"allowInsecure"`
-	Fingerprint   string `json:"fp,omitempty`
-	PublicKey     string `json:"pbk,omitempty"`
-	ShortId       string `json:"sid,omitempty"`
-	SpiderX       string `json:"spx,omitempty"`
-	V             string `json:"v"`
-	Protocol      string `json:"protocol"`
+	Ps            string       `json:"ps"`
+	Add           string       `json:"add"`
+	Port          string       `json:"port"`
+	ID            string       `json:"id"`
+	Aid           string       `json:"aid"`
+	Net           string       `json:"net"`
+	Type          string       `json:"type"`
+	Host          string       `json:"host"`
+	SNI           string       `json:"sni"`
+	Path          string       `json:"path"`
+	TLS           string       `json:"tls"`
+	Flow          string       `json:"flow,omitempty"`
+	Alpn          string       `json:"alpn,omitempty"`
+	AllowInsecure bool         `json:"allowInsecure"`
+	Fingerprint   string       `json:"fp,omitempty`
+	PublicKey     string       `json:"pbk,omitempty"`
+	ShortId       string       `json:"sid,omitempty"`
+	SpiderX       string       `json:"spx,omitempty"`
+	V             string       `json:"v"`
+	Protocol      string       `json:"protocol"`
+	XHTTP         *XHTTPConfig `json:"-"`
 }
 
 func NewV2Ray(option *dialer.ExtraOption, nextDialer netproxy.Dialer, link string) (netproxy.Dialer, *dialer.Property, error) {
@@ -233,6 +234,11 @@ func (s *V2Ray) Dialer(option *dialer.ExtraOption, nextDialer netproxy.Dialer) (
 		if err != nil {
 			return nil, nil, err
 		}
+	case "xhttp", "splithttp":
+		d, err = newXHTTPDialer(option, d, s)
+		if err != nil {
+			return nil, nil, err
+		}
 	default:
 		return nil, nil, fmt.Errorf("%w: network: %v", dialer.UnexpectedFieldErr, s.Net)
 	}
@@ -260,24 +266,28 @@ func ParseVlessURL(vless string) (data *V2Ray, err error) {
 	if err != nil {
 		return nil, err
 	}
+	q := u.Query()
+	if q.Get("type") == "" && isXHTTPTransport(q.Get("network")) {
+		q.Set("type", q.Get("network"))
+	}
 	data = &V2Ray{
 		Ps:            u.Fragment,
 		Add:           u.Hostname(),
 		Port:          u.Port(),
 		ID:            u.User.String(),
-		Net:           u.Query().Get("type"),
-		Type:          u.Query().Get("headerType"),
-		Host:          u.Query().Get("host"),
-		SNI:           u.Query().Get("sni"),
-		Path:          u.Query().Get("path"),
-		TLS:           u.Query().Get("security"),
-		Flow:          u.Query().Get("flow"),
-		Alpn:          u.Query().Get("alpn"),
+		Net:           q.Get("type"),
+		Type:          q.Get("headerType"),
+		Host:          q.Get("host"),
+		SNI:           q.Get("sni"),
+		Path:          q.Get("path"),
+		TLS:           q.Get("security"),
+		Flow:          q.Get("flow"),
+		Alpn:          q.Get("alpn"),
 		AllowInsecure: false,
-		Fingerprint:   u.Query().Get("fp"),
-		PublicKey:     u.Query().Get("pbk"),
-		ShortId:       u.Query().Get("sid"),
-		SpiderX:       u.Query().Get("spx"),
+		Fingerprint:   q.Get("fp"),
+		PublicKey:     q.Get("pbk"),
+		ShortId:       q.Get("sid"),
+		SpiderX:       q.Get("spx"),
 		V:             "2",
 		Protocol:      "vless",
 	}
@@ -288,7 +298,7 @@ func ParseVlessURL(vless string) (data *V2Ray, err error) {
 		data.Path = u.Query().Get("serviceName")
 	}
 	if data.Net == "meek" {
-		data.Path = u.Query().Get("url")
+		data.Path = q.Get("url")
 	}
 	if data.Type == "" {
 		data.Type = "none"
@@ -298,6 +308,9 @@ func ParseVlessURL(vless string) (data *V2Ray, err error) {
 	}
 	if data.Type == "mkcp" || data.Type == "kcp" {
 		data.Path = u.Query().Get("seed")
+	}
+	if err := parseVlessXHTTPConfig(u.Query(), data); err != nil {
+		return nil, err
 	}
 	return data, nil
 }
@@ -377,6 +390,9 @@ func ParseVmessURL(vmess string) (data *V2Ray, err error) {
 	if info.Aid == "" {
 		info.Aid = "0"
 	}
+	if isXHTTPTransport(info.Net) {
+		return nil, fmt.Errorf("%w: vmess xhttp is unsupported in first version: network: %v", dialer.UnexpectedFieldErr, info.Net)
+	}
 	info.Protocol = "vmess"
 	return &info, nil
 }
@@ -389,6 +405,13 @@ func (s *V2Ray) ExportToURL() string {
 		common.SetValue(&query, "type", s.Net)
 		common.SetValue(&query, "security", s.TLS)
 		switch s.Net {
+		case "xhttp", "splithttp":
+			common.SetValue(&query, "path", s.Path)
+			common.SetValue(&query, "host", s.Host)
+			if s.XHTTP != nil {
+				common.SetValue(&query, "mode", s.XHTTP.Mode)
+				common.SetValue(&query, "extra", s.XHTTP.ExtraRaw)
+			}
 		case "websocket", "ws", "http", "h2", "httpupgrade":
 			common.SetValue(&query, "path", s.Path)
 			common.SetValue(&query, "host", s.Host)
