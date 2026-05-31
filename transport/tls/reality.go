@@ -180,8 +180,6 @@ func (x *Reality) DialContext(ctx context.Context, network, addr string) (c netp
 		if err != nil {
 			return nil, fmt.Errorf("[REALITY]: dial to %s: %w", addr, err)
 		}
-		retry := 0
-	retryHandshake:
 		uConn := &RealityUConn{}
 		utlsConfig := &utls.Config{
 			VerifyPeerCertificate:  uConn.VerifyPeerCertificate,
@@ -213,16 +211,11 @@ func (x *Reality) DialContext(ctx context.Context, network, addr string) (c netp
 			// if config.Show {
 			// logrus.Printf("REALITY hello.SessionId[:16]: %v\n", hello.SessionId[:16])
 			// }
-			if uConn.HandshakeState.State13.EcdheKey == nil {
-				// logrus.Println("wtf", retry, addr)
-				if retry > 2 {
-					return nil, errors.New("nil ecdheKey")
-				}
-				retry++
-				goto retryHandshake // retry
+			ecdhe := realityTLS13PrivateKey(uConn.HandshakeState.State13)
+			if ecdhe == nil {
+				return nil, realityNoTLS13KeyShareError(uConn.ClientHelloID)
 			}
-			// logrus.Println("OH YEAH", retry)
-			uConn.AuthKey, _ = uConn.HandshakeState.State13.EcdheKey.ECDH(x.publicKey)
+			uConn.AuthKey, _ = ecdhe.ECDH(x.publicKey)
 			if uConn.AuthKey == nil {
 				return nil, errors.New("REALITY: SharedKey == nil")
 			}
@@ -345,6 +338,70 @@ func (x *Reality) DialContext(ctx context.Context, network, addr string) (c netp
 		return nil, fmt.Errorf("%w: %v", netproxy.UnsupportedTunnelTypeError, network)
 	}
 
+}
+
+func realityTLS13PrivateKey(state any) *ecdh.PrivateKey {
+	stateValue := reflect.ValueOf(state)
+	if !stateValue.IsValid() {
+		return nil
+	}
+	if stateValue.Kind() == reflect.Pointer {
+		if stateValue.IsNil() {
+			return nil
+		}
+		stateValue = stateValue.Elem()
+	}
+	if !stateValue.IsValid() || stateValue.Kind() != reflect.Struct {
+		return nil
+	}
+
+	keyShares := reflectFieldValue(stateValue, "KeyShareKeys")
+	if !keyShares.IsValid() {
+		return nil
+	}
+	if key := reflectECDHPrivateKey(keyShares, "Ecdhe"); key != nil {
+		return key
+	}
+	if key := reflectECDHPrivateKey(keyShares, "MlkemEcdhe"); key != nil {
+		return key
+	}
+	return nil
+}
+
+func reflectFieldValue(value reflect.Value, fieldName string) reflect.Value {
+	if !value.IsValid() {
+		return reflect.Value{}
+	}
+	if value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return reflect.Value{}
+		}
+		value = value.Elem()
+	}
+	if !value.IsValid() || value.Kind() != reflect.Struct {
+		return reflect.Value{}
+	}
+	field := value.FieldByName(fieldName)
+	if !field.IsValid() {
+		return reflect.Value{}
+	}
+	return field
+}
+
+func reflectECDHPrivateKey(container reflect.Value, fieldName string) *ecdh.PrivateKey {
+	field := reflectFieldValue(container, fieldName)
+	if !field.IsValid() || field.Kind() != reflect.Pointer || field.IsNil() {
+		return nil
+	}
+	key, ok := field.Interface().(*ecdh.PrivateKey)
+	if !ok {
+		return nil
+	}
+	return key
+}
+
+func realityNoTLS13KeyShareError(helloID utls.ClientHelloID) error {
+	return fmt.Errorf("current fingerprint %s %s does not support TLS 1.3 keyshare, REALITY handshake cannot establish", helloID.Client, helloID.Version)
 }
 
 var (
