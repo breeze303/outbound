@@ -42,10 +42,11 @@ type V2Ray struct {
 	Flow          string       `json:"flow,omitempty"`
 	Alpn          string       `json:"alpn,omitempty"`
 	AllowInsecure bool         `json:"allowInsecure"`
-	Fingerprint   string       `json:"fp,omitempty`
+	Fingerprint   string       `json:"fp,omitempty"`
 	PublicKey     string       `json:"pbk,omitempty"`
 	ShortId       string       `json:"sid,omitempty"`
 	SpiderX       string       `json:"spx,omitempty"`
+	Mldsa65Verify string       `json:"pqv,omitempty"`
 	V             string       `json:"v"`
 	Protocol      string       `json:"protocol"`
 	XHTTP         *XHTTPConfig `json:"-"`
@@ -130,6 +131,7 @@ func (s *V2Ray) Dialer(option *dialer.ExtraOption, nextDialer netproxy.Dialer) (
 						"sid": []string{s.ShortId},
 						"pbk": []string{s.PublicKey},
 						"spx": []string{s.SpiderX},
+						"pqv": []string{s.Mldsa65Verify},
 					}.Encode(),
 				}
 				d, err = tls.NewReality(u.String(), d)
@@ -288,6 +290,7 @@ func ParseVlessURL(vless string) (data *V2Ray, err error) {
 		PublicKey:     q.Get("pbk"),
 		ShortId:       q.Get("sid"),
 		SpiderX:       q.Get("spx"),
+		Mldsa65Verify: q.Get("pqv"),
 		V:             "2",
 		Protocol:      "vless",
 	}
@@ -434,6 +437,12 @@ func (s *V2Ray) ExportToURL() string {
 			common.SetValue(&query, "alpn", s.Alpn)
 			common.SetValue(&query, "flow", s.Flow)
 			common.SetValue(&query, "fp", s.Fingerprint)
+		}
+		if s.TLS == "reality" {
+			common.SetValue(&query, "pbk", s.PublicKey)
+			common.SetValue(&query, "sid", s.ShortId)
+			common.SetValue(&query, "spx", s.SpiderX)
+			common.SetValue(&query, "pqv", s.Mldsa65Verify)
 		}
 
 		U := url.URL{

@@ -1193,6 +1193,8 @@ func TestVLESSExistingTransportConstructionAndExport(t *testing.T) {
 		name       string
 		query      url.Values
 		wantExport map[string]string
+		wantAbsent []string
+		dial       bool
 	}{
 		{
 			name: "tcp",
@@ -1201,6 +1203,8 @@ func TestVLESSExistingTransportConstructionAndExport(t *testing.T) {
 				"headerType": {"none"},
 			},
 			wantExport: map[string]string{"type": "tcp", "headerType": "none"},
+			wantAbsent: []string{"pbk", "sid", "spx", "pqv"},
+			dial:       true,
 		},
 		{
 			name: "ws",
@@ -1210,6 +1214,8 @@ func TestVLESSExistingTransportConstructionAndExport(t *testing.T) {
 				"path": {"/websocket"},
 			},
 			wantExport: map[string]string{"type": "ws", "host": "ws.example", "path": "/websocket"},
+			wantAbsent: []string{"pbk", "sid", "spx", "pqv"},
+			dial:       true,
 		},
 		{
 			name: "grpc",
@@ -1218,6 +1224,8 @@ func TestVLESSExistingTransportConstructionAndExport(t *testing.T) {
 				"serviceName": {"GunService"},
 			},
 			wantExport: map[string]string{"type": "grpc", "serviceName": "GunService"},
+			wantAbsent: []string{"pbk", "sid", "spx", "pqv"},
+			dial:       true,
 		},
 		{
 			name: "h2",
@@ -1227,6 +1235,8 @@ func TestVLESSExistingTransportConstructionAndExport(t *testing.T) {
 				"path": {"/h2"},
 			},
 			wantExport: map[string]string{"type": "h2", "host": "h2.example", "path": "/h2"},
+			wantAbsent: []string{"pbk", "sid", "spx", "pqv"},
+			dial:       true,
 		},
 		{
 			name: "http",
@@ -1236,6 +1246,8 @@ func TestVLESSExistingTransportConstructionAndExport(t *testing.T) {
 				"path": {"/http"},
 			},
 			wantExport: map[string]string{"type": "http", "host": "http.example", "path": "/http"},
+			wantAbsent: []string{"pbk", "sid", "spx", "pqv"},
+			dial:       true,
 		},
 		{
 			name: "httpupgrade",
@@ -1245,6 +1257,44 @@ func TestVLESSExistingTransportConstructionAndExport(t *testing.T) {
 				"path": {"/upgrade"},
 			},
 			wantExport: map[string]string{"type": "httpupgrade", "host": "upgrade.example", "path": "/upgrade"},
+			wantAbsent: []string{"pbk", "sid", "spx", "pqv"},
+			dial:       true,
+		},
+		{
+			name: "tls-no-reality-fields",
+			query: url.Values{
+				"type":     {"tcp"},
+				"security": {"tls"},
+				"sni":      {"tls.example"},
+				"alpn":     {"h2"},
+				"flow":     {"xtls-rprx-vision"},
+				"fp":       {"chrome"},
+				"pbk":      {"should-not-export-pbk"},
+				"sid":      {"should-not-export-sid"},
+				"spx":      {"should-not-export-spx"},
+				"pqv":      {"should-not-export-pqv"},
+			},
+			wantExport: map[string]string{"type": "tcp", "security": "tls", "sni": "tls.example", "alpn": "h2", "flow": "xtls-rprx-vision", "fp": "chrome"},
+			wantAbsent: []string{"pbk", "sid", "spx", "pqv"},
+			dial:       true,
+		},
+		{
+			name: "tcp-reality-roundtrip",
+			query: url.Values{
+				"type":       {"tcp"},
+				"security":   {"reality"},
+				"headerType": {"none"},
+				"sni":        {"reality.example"},
+				"alpn":       {"h2,http/1.1"},
+				"flow":       {"xtls-rprx-vision"},
+				"fp":         {"chrome"},
+				"pbk":        {"public-key-value"},
+				"sid":        {"shortid-value"},
+				"spx":        {"spider-x-value"},
+				"pqv":        {"mldsa65-verify-value"},
+			},
+			wantExport: map[string]string{"type": "tcp", "security": "reality", "headerType": "none", "sni": "reality.example", "alpn": "h2,http/1.1", "flow": "xtls-rprx-vision", "fp": "chrome", "pbk": "public-key-value", "sid": "shortid-value", "spx": "spider-x-value", "pqv": "mldsa65-verify-value"},
+			dial:       false,
 		},
 	}
 
@@ -1255,32 +1305,105 @@ func TestVLESSExistingTransportConstructionAndExport(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseVlessURL() error = %v", err)
 			}
-			d, property, err := v.Dialer(&dialer.ExtraOption{}, xhttpServerDialer{addr: "127.0.0.1:1"})
+			exportedLink := v.ExportToURL()
+			if tt.dial {
+				d, property, err := v.Dialer(&dialer.ExtraOption{}, xhttpServerDialer{addr: "127.0.0.1:1"})
+				if err != nil {
+					t.Fatalf("V2Ray.Dialer() error = %v", err)
+				}
+				if d == nil || property == nil {
+					t.Fatalf("V2Ray.Dialer() returned dialer=%v property=%v, want non-nil", d, property)
+				}
+				if property.Protocol != "vless" || property.Address != "example.com:443" {
+					t.Fatalf("property = %+v, want vless example.com:443", property)
+				}
+				if strings.HasPrefix(property.Link, "xhttp://") {
+					t.Fatalf("property.Link = %q, must not use xhttp:// scheme", property.Link)
+				}
+				exportedLink = property.Link
+			}
+			exported, err := url.Parse(exportedLink)
 			if err != nil {
-				t.Fatalf("V2Ray.Dialer() error = %v", err)
-			}
-			if d == nil || property == nil {
-				t.Fatalf("V2Ray.Dialer() returned dialer=%v property=%v, want non-nil", d, property)
-			}
-			if property.Protocol != "vless" || property.Address != "example.com:443" {
-				t.Fatalf("property = %+v, want vless example.com:443", property)
-			}
-			if strings.HasPrefix(property.Link, "xhttp://") {
-				t.Fatalf("property.Link = %q, must not use xhttp:// scheme", property.Link)
-			}
-			exported, err := url.Parse(property.Link)
-			if err != nil {
-				t.Fatalf("url.Parse(property.Link %q): %v", property.Link, err)
+				t.Fatalf("url.Parse(exported link %q): %v", exportedLink, err)
 			}
 			if exported.Scheme != "vless" {
 				t.Fatalf("exported scheme = %q, want vless", exported.Scheme)
 			}
 			for key, want := range tt.wantExport {
 				if got := exported.Query().Get(key); got != want {
-					t.Fatalf("exported query %s = %q, want %q in %q", key, got, want, property.Link)
+					t.Fatalf("exported query %s = %q, want %q in %q", key, got, want, exportedLink)
+				}
+			}
+			for _, key := range tt.wantAbsent {
+				if got := exported.Query().Get(key); got != "" {
+					t.Fatalf("exported query %s = %q, want empty in %q", key, got, exportedLink)
 				}
 			}
 		})
+	}
+}
+
+func TestXHTTPVLESSRealityRoundTripPreservesPQV(t *testing.T) {
+	q := url.Values{
+		"type":     {"xhttp"},
+		"security": {"reality"},
+		"sni":      {"reality.example"},
+		"host":     {"host.example"},
+		"path":     {"api?token=1"},
+		"mode":     {"stream-one"},
+		"flow":     {"xtls-rprx-vision"},
+		"alpn":     {"h2,http/1.1"},
+		"fp":       {"chrome"},
+		"pbk":      {"public-key-value"},
+		"sid":      {"shortid-value"},
+		"spx":      {"spider-x-value"},
+		"pqv":      {"mldsa65-verify-value"},
+	}
+
+	v, err := ParseVlessURL(vlessXHTTPTestURL(q))
+	if err != nil {
+		t.Fatalf("ParseVlessURL() error = %v", err)
+	}
+	if v.Mldsa65Verify != "mldsa65-verify-value" {
+		t.Fatalf("Mldsa65Verify = %q, want mldsa65-verify-value", v.Mldsa65Verify)
+	}
+	if v.XHTTP == nil {
+		t.Fatal("XHTTP config is nil")
+	}
+	d, property, err := v.Dialer(&dialer.ExtraOption{}, xhttpServerDialer{addr: "127.0.0.1:1"})
+	if err == nil {
+		if d != nil {
+			_ = d
+		}
+		t.Fatal("V2Ray.Dialer() error = nil, want reality setup failure without live server")
+	}
+	if property != nil {
+		t.Fatalf("property = %+v, want nil when reality setup fails", property)
+	}
+	if !strings.Contains(err.Error(), "reality") && !strings.Contains(err.Error(), "dial") {
+		t.Fatalf("V2Ray.Dialer() error = %v, want reality dial setup failure", err)
+	}
+	exported := v.ExportToURL()
+	parsed, err := url.Parse(exported)
+	if err != nil {
+		t.Fatalf("url.Parse(exported %q): %v", exported, err)
+	}
+	for key, want := range map[string]string{
+		"security": "reality",
+		"sni":      "reality.example",
+		"host":     "host.example",
+		"path":     "api?token=1",
+		"flow":     "xtls-rprx-vision",
+		"alpn":     "h2,http/1.1",
+		"fp":       "chrome",
+		"pbk":      "public-key-value",
+		"sid":      "shortid-value",
+		"spx":      "spider-x-value",
+		"pqv":      "mldsa65-verify-value",
+	} {
+		if got := parsed.Query().Get(key); got != want {
+			t.Fatalf("exported query %s = %q, want %q in %q", key, got, want, exported)
+		}
 	}
 }
 

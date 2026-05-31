@@ -74,7 +74,7 @@ func redactXHTTPInteropLink(link string) string {
 		u.User = url.User("<redacted-uuid>")
 	}
 	q := u.Query()
-	for _, key := range []string{"pbk", "sid"} {
+	for _, key := range []string{"pbk", "sid", "pqv"} {
 		if q.Get(key) != "" {
 			q.Set(key, "<redacted>")
 		}

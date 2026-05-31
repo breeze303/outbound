@@ -114,6 +114,7 @@ func newXHTTPDialer(option *dialer.ExtraOption, nextDialer netproxy.Dialer, s *V
 				"sid": []string{s.ShortId},
 				"pbk": []string{s.PublicKey},
 				"spx": []string{s.SpiderX},
+				"pqv": []string{s.Mldsa65Verify},
 			}.Encode(),
 		}
 		realityDialer, err := transporttls.NewReality(realityURL.String(), nextDialer)
